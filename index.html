@@ -17,15 +17,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
 <script>
-/* Splash: aparece só quando o app é aberto (sessão nova). Recarregar/voltar com o app aberto não mostra. */
-(function(){
-  try{
-    if(!sessionStorage.getItem('nm-splash')){
-      sessionStorage.setItem('nm-splash','1');
-      document.documentElement.classList.add('splash-on');
-    }
-  }catch(e){}
-})();
+/* Splash: aparece toda vez que a página é aberta ou atualizada. */
+document.documentElement.classList.add('splash-on');
 </script>
 <style>
 /* Layout: cabeçalho + painel "Parâmetros de Engenharia" (visualização 3D com seleção de elementos, geometria, identificação, tinta)
@@ -237,6 +230,17 @@ html.splash-on body{overflow:hidden}
 #splash .nm-bar.show{opacity:1}
 #splash .nm-bar i{display:block;height:100%;width:100%;border-radius:3px;transform-origin:left;transform:scaleX(0);
   background:linear-gradient(90deg,var(--accent-deep),var(--accent-2));box-shadow:0 0 10px var(--glow)}
+
+/* ---------- projeto (salvar / abrir) ---------- */
+.proj{margin:12px 0 4px;padding:12px;border:1px dashed var(--edge-2);border-radius:12px;background:rgba(255,255,255,.015)}
+.proj .lbl{margin-top:0}
+.proj .row-actions{margin-top:10px}
+.proj .sub{margin:10px 0 0;line-height:1.4}
+.modal-back{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.62);display:flex;align-items:center;justify-content:center;padding:20px}
+.modal{background:linear-gradient(180deg,var(--panel-a),var(--panel-b));border:1px solid var(--edge-2);border-radius:var(--radius);padding:20px;max-width:380px;width:100%;box-shadow:0 20px 50px rgba(0,0,0,.6)}
+.modal h3{margin:0 0 6px;font:600 1.15rem var(--f-display);color:var(--accent-2)}
+.modal p{margin:0 0 16px;color:var(--muted);font-size:.9rem}
+.modal .btns{display:grid;gap:8px}
 </style>
 </head>
 <body>
@@ -583,6 +587,16 @@ html.splash-on body{overflow:hidden}
 
     <section class="card" id="histCard">
       <strong>Histórico</strong>
+      <div class="proj" id="proj">
+        <label class="lbl" for="projName">Projeto</label>
+        <input type="text" id="projName" placeholder="Nome do projeto (opcional)" autocomplete="off" maxlength="60">
+        <div class="row-actions">
+          <button type="button" id="projSave">Salvar projeto</button>
+          <button type="button" id="projOpen">Abrir projeto</button>
+        </div>
+        <input type="file" id="projFile" accept=".json,application/json" class="hidden">
+        <p class="sub" id="projInfo">Para trocar de telefone: toque em Salvar projeto, envie o arquivo para você mesmo (WhatsApp, e-mail ou Drive) e, no aparelho novo, toque em Abrir projeto.</p>
+      </div>
       <div id="hist"></div>
       <div class="total hidden" id="total"><span>Área total</span><span id="totalVal"></span></div>
       <div class="hidden" id="histModo">
@@ -1624,7 +1638,7 @@ function buildJpegBlob(entries, when, modo){
   buildChips($('units'), 'unit', Object.keys(UNITS).map(k => [k, UNITS[k].label]), unit, pickUnit);
 
   $('go').addEventListener('click', calculate);
-  document.addEventListener('keydown', ev => { if (ev.key === 'Enter' && ev.target.tagName === 'INPUT' && ev.target.type === 'text') calculate(); });
+  document.addEventListener('keydown', ev => { if (ev.key === 'Enter' && ev.target.tagName === 'INPUT' && ev.target.type === 'text' && ev.target.id !== 'projName') calculate(); });
   $('add').addEventListener('click', () => {
     if (!last) return;
     if (editIdx != null && hist[editIdx]){ last.ts = hist[editIdx].ts; hist[editIdx] = last; cancelEdit(); flash('Alterações salvas.'); }
@@ -1656,6 +1670,103 @@ function buildJpegBlob(entries, when, modo){
     try { localStorage.setItem('delineamento-modo-texto', modoTexto); } catch(e){}
   }));
   syncModo();
+
+  /* ---------- Projeto: salvar em arquivo / abrir em outro aparelho ---------- */
+  const PNAME_KEY = 'delineamento-projeto-nome', PBK_KEY = 'delineamento-backup-ts';
+  const projName = $('projName');
+  try { projName.value = localStorage.getItem(PNAME_KEY) || ''; } catch(e){}
+  projName.addEventListener('input', () => { try { localStorage.setItem(PNAME_KEY, projName.value.trim()); } catch(e){} });
+
+  function fmtWhen(ts){
+    const d = new Date(ts), p = n => String(n).padStart(2, '0');
+    return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+  function syncProjInfo(){
+    let ts = null; try { ts = Number(localStorage.getItem(PBK_KEY)) || null; } catch(e){}
+    $('projInfo').textContent = (ts ? 'Último arquivo salvo: ' + fmtWhen(ts) + '. ' : '') +
+      'Para trocar de telefone: toque em Salvar projeto, envie o arquivo para você mesmo (WhatsApp, e-mail ou Drive) e, no aparelho novo, toque em Abrir projeto.';
+  }
+  function slug(t){
+    return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+  }
+
+  async function saveProject(){
+    if (!hist.length){ flash('Não há nada no histórico para salvar ainda.'); return; }
+    const nome = projName.value.trim(), now = Date.now();
+    const data = {app: 'NaMedida', versao: 1, nome: nome, salvoEm: new Date(now).toISOString(), itens: hist};
+    const blob = new Blob([JSON.stringify(data, null, 1)], {type: 'application/json'});
+    const name = 'namedida-' + (slug(nome) ? slug(nome) + '-' : '') + fileStamp() + '.json';
+    const mark = () => { try { localStorage.setItem(PBK_KEY, String(now)); } catch(e){} syncProjInfo(); };
+    try {
+      const file = new File([blob], name, {type: 'application/json'});
+      if (navigator.canShare && navigator.canShare({files: [file]})){
+        await navigator.share({files: [file], title: 'Projeto NaMedida' + (nome ? ' — ' + nome : '')});
+        mark(); flash('Projeto enviado. Guarde o arquivo para abrir no outro aparelho.'); return;
+      }
+    } catch(e){ if (e && e.name === 'AbortError') return; }
+    download(blob, name); mark();
+    flash('Projeto salvo como ' + name + '. Envie esse arquivo para o outro aparelho.');
+  }
+
+  function cleanEntries(arr){
+    return arr.filter(e => e && typeof e === 'object' && typeof e.type === 'string' && Number.isFinite(e.area) && e.area > 0)
+      .map(e => { const c = Object.assign({}, e); if (!Number.isFinite(c.ts)) c.ts = Date.now(); return c; });
+  }
+
+  function ask(title, msg, opts){
+    return new Promise(res => {
+      const back = document.createElement('div'); back.className = 'modal-back';
+      const box = document.createElement('div'); box.className = 'modal'; box.setAttribute('role', 'dialog');
+      const h = document.createElement('h3'); h.textContent = title;
+      const p = document.createElement('p'); p.textContent = msg;
+      const bt = document.createElement('div'); bt.className = 'btns';
+      const done = v => { back.remove(); res(v); };
+      opts.forEach(o => {
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = o[1];
+        if (o[2]) b.className = 'primary';
+        b.addEventListener('click', () => done(o[0])); bt.append(b);
+      });
+      back.addEventListener('click', ev => { if (ev.target === back) done(null); });
+      box.append(h, p, bt); back.append(box); document.body.append(back);
+    });
+  }
+
+  async function openProject(file){
+    let data;
+    try { data = JSON.parse(await file.text()); } catch(e){ flash('Arquivo inválido: não é um projeto do NaMedida.'); return; }
+    const raw = Array.isArray(data) ? data : (data && data.app === 'NaMedida' && Array.isArray(data.itens) ? data.itens : null);
+    if (!raw){ flash('Arquivo inválido: não é um projeto do NaMedida.'); return; }
+    const items = cleanEntries(raw);
+    if (!items.length){ flash('O projeto não tem nenhum cálculo válido.'); return; }
+    const nome = (data && typeof data.nome === 'string') ? data.nome.trim().slice(0, 60) : '';
+    let mode = 'replace';
+    if (hist.length){
+      mode = await ask('Abrir projeto', 'O projeto tem ' + items.length + ' cálculo(s) e este aparelho já tem ' + hist.length + ' no histórico. O que fazer?',
+        [['merge', 'Juntar ao histórico atual', true], ['replace', 'Substituir o histórico atual'], [null, 'Cancelar']]);
+      if (!mode) return;
+    }
+    cancelEdit(); last = null; $('res').classList.add('hidden');
+    if (mode === 'merge'){
+      const seen = new Set(), all = [];
+      hist.concat(items).forEach(e => { const k = JSON.stringify(e); if (!seen.has(k)){ seen.add(k); all.push(e); } });
+      all.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+      const added = all.length - hist.length; hist = all;
+      flash(added > 0 ? added + ' cálculo(s) adicionado(s) ao histórico.' : 'Todos os cálculos já estavam no histórico.');
+    } else {
+      hist = items; flash(items.length + ' cálculo(s) carregado(s). Pode continuar de onde parou.');
+    }
+    if (nome && (!projName.value.trim() || mode === 'replace')){ projName.value = nome; try { localStorage.setItem(PNAME_KEY, nome); } catch(e){} }
+    saveHist(); renderHist();
+  }
+
+  $('projSave').addEventListener('click', saveProject);
+  $('projOpen').addEventListener('click', () => $('projFile').click());
+  $('projFile').addEventListener('change', () => {
+    const f = $('projFile').files && $('projFile').files[0];
+    $('projFile').value = '';
+    if (f) openProject(f);
+  });
+  syncProjInfo();
 
   initVals(); renderFields(); renderHist();
 })();
