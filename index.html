@@ -2045,8 +2045,8 @@ function buildJpegBlob(entries, when, modo){
   });
   vp.addEventListener('pointermove', function(e){
     if (!drag) return;
-    yaw = drag.yaw + (e.clientX - drag.x) * 0.01;
-    pitch = clamp(drag.pitch + (e.clientY - drag.y) * 0.008, -1.2, 1.2);
+    yaw = drag.yaw - (e.clientX - drag.x) * 0.01;
+    pitch = clamp(drag.pitch - (e.clientY - drag.y) * 0.008, -1.2, 1.2);
   });
   function end(){ drag = null; idle = performance.now(); }
   vp.addEventListener('pointerup', end); vp.addEventListener('pointercancel', end);
