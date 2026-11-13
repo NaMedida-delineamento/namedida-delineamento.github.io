@@ -1841,7 +1841,7 @@ function buildJpegBlob(entries, when, modo){
   var cv = document.getElementById('wire');
   if (!cv || !cv.getContext) return;
   var ctx = cv.getContext('2d'), vp = document.getElementById('vp'), dimsEl = document.getElementById('vpDims');
-  var segs = [], dim = null, yaw = -0.6, pitch = 0.42, drag = null, idle = 0, dirty = true;
+  var segs = [], dims = [], yaw = -0.6, pitch = 0.42, drag = null, idle = 0, dirty = true;
   // giro automático ligado por padrão; o botão do canto pausa e a escolha fica salva no aparelho
   var spin = true, spinBtn = document.getElementById('vpSpin');
   try { spin = localStorage.getItem('delineamento-giro') !== 'off'; } catch(e){}
@@ -1881,12 +1881,36 @@ function buildJpegBlob(entries, when, modo){
 
   function lenDim(L, poly, label){ var y = -ext(poly) * 1.6 - L * 0.04; return {a:[-L / 2, y, 0], b:[L / 2, y, 0], label:label}; }
 
-  function geom(t, num, sel, lab){
-    var s = [], d = null;
+  // posiciona rótulos sem sobreposição: cada um desce até achar espaço livre
+  function nmPlaceLabels(L, minY, maxY, gap){
+    var done = [];
+    L.sort(function(p, q){ return p.y - q.y; }).forEach(function(l){
+      var tries = 0, ok = false;
+      while (!ok && tries < 12){
+        ok = true;
+        for (var i = 0; i < done.length; i++){
+          var o = done[i];
+          if (l.x < o.x + o.w + gap && o.x < l.x + l.w + gap && l.y < o.y + o.h + gap && o.y < l.y + l.h + gap){ l.y = o.y + o.h + gap; ok = false; break; }
+        }
+        tries++;
+      }
+      if (l.y + l.h > maxY) l.y = Math.max(minY, maxY - l.h);
+      done.push(l);
+    });
+  }
+
+  window.nmPlaceLabels = nmPlaceLabels;
+  function geom(t, num, sel, lab, has){
+    var s = [], ds = [];
+    has = has || function(){ return true; };
+    function addDim(id, a, b){ if (has(id)) ds.push({a:a, b:b, label:lab(id)}); }
     if (t === 'tubo'){
       var D = num('d') || 1, r = D / 2, L = clamp(num('l') || 3 * D, 2.2 * D, 3.4 * D), tt = num('t'), sh = circle(r);
       s = extrude(sh, L, 5, 2, circle(Math.max(r - (tt && tt < r ? tt : r * 0.08), r * 0.25)));
-      d = lenDim(L, sh, lab('l'));
+      var ld = lenDim(L, sh, ''), mgT = r * 0.35, xe = L / 2 + mgT;
+      addDim('l', ld.a, ld.b);
+      addDim('d', [xe, -r, 0], [xe, r, 0]);
+      if (tt) addDim('t', [L / 2 + mgT * 0.3, r - (tt < r ? tt : r * 0.08), 0], [L / 2 + mgT * 0.3, r, 0]);
     } else if (t === 'perfil' || t === 'viga'){
       var h = num('h') || 1, b = num('b') || h / 2, H = h / 2, B = b / 2;
       var shape = t === 'viga' ? 'I' : sel('shape', 'I');
@@ -1899,18 +1923,29 @@ function buildJpegBlob(entries, when, modo){
       else P = [[H,-B],[H,B],[H-tf,B],[H-tf,tw/2],[-H+tf,tw/2],[-H+tf,B],[-H,B],[-H,-B],[-H+tf,-B],[-H+tf,-tw/2],[H-tf,-tw/2],[H-tf,-B]];
       var LL = clamp(num('l') || 3 * h, 2.2 * Math.max(h, b), 4 * Math.max(h, b));
       s = extrude(P, LL, 4, 1, inner);
-      d = lenDim(LL, P, lab('l'));
+      var ldp = lenDim(LL, P, ''), mg = Math.max(H, B) * 0.35, xp = LL / 2 + mg * 0.5;
+      addDim('l', ldp.a, ldp.b);
+      addDim('h', [xp, -H, -(B + mg)], [xp, H, -(B + mg)]);
+      addDim('b', [xp, -(H + mg), -B], [xp, -(H + mg), B]);
+      addDim('tf', [xp, H - tf, B + mg * 0.6], [xp, H, B + mg * 0.6]);
+      addDim('tw', shape === 'U' ? [xp, 0, -B] : [xp, 0, -tw / 2], shape === 'U' ? [xp, 0, -B + tw] : [xp, 0, tw / 2]);
     } else if (t === 'chapa'){
       var C = num('c') || 2, W = num('w') || 1, Lc = clamp(C, 0.6 * W, 2.5 * W), e = Math.max(num('e') || 0, 0.025 * Math.max(Lc, W));
       var R = [[e/2,-W/2],[e/2,W/2],[-e/2,W/2],[-e/2,-W/2]];
       s = extrude(R, Lc, 3, 1);
-      d = {a:[-Lc/2, -e/2, W/2 + W*0.18], b:[Lc/2, -e/2, W/2 + W*0.18], label:lab('c')};
+      var mgc = W * 0.25;
+      addDim('c', [-Lc/2, -e/2, W/2 + W*0.18], [Lc/2, -e/2, W/2 + W*0.18]);
+      addDim('w', [Lc/2 + mgc, -e/2, -W/2], [Lc/2 + mgc, -e/2, W/2]);
+      addDim('e', [Lc/2, -e/2, -W/2 - mgc * 0.5], [Lc/2, e/2, -W/2 - mgc * 0.5]);
     } else if (t === 'cantoneira'){
       var A = num('a') || 1, Bb = num('b') || A, ee = Math.min(A, Bb) * 0.1, M = Math.max(A, Bb);
       var Lp = [[A,0],[A,ee],[ee,ee],[ee,Bb],[0,Bb],[0,0]].map(function(p){ return [p[0] - A/2, p[1] - Bb/2]; });
       var La = clamp(num('l') || 3 * M, 2.4 * M, 4.2 * M);
       s = extrude(Lp, La, 4, 1);
-      d = lenDim(La, Lp, lab('l'));
+      var ldc = lenDim(La, Lp, ''), mgA = M * 0.3, xc = La / 2 + mgA * 0.5;
+      addDim('l', ldc.a, ldc.b);
+      addDim('a', [xc, -A/2, -Bb/2 - mgA], [xc, A/2, -Bb/2 - mgA]);
+      addDim('b', [xc, -A/2 - mgA, -Bb/2], [xc, -A/2 - mgA, Bb/2]);
     } else if (t === 'tanque'){
       var kind = sel('kind', 'esfera'), Dt = num('d') || 1, rt = Dt / 2, i, k;
       if (kind === 'esfera'){
@@ -1922,7 +1957,7 @@ function buildJpegBlob(entries, when, modo){
           prev = null;
           for (i = 0; i <= 24; i++){ var a2 = Math.PI/2 + Math.PI * i / 24, pt2 = [rt * Math.cos(a2) * Math.cos(th), rt * Math.sin(a2), rt * Math.cos(a2) * Math.sin(th)];
             if (prev) s.push([prev, pt2, false]); prev = pt2; } }
-        d = {a:[-rt, -rt * 1.25, 0], b:[rt, -rt * 1.25, 0], label:lab('d')};
+        addDim('d', [-rt, -rt * 1.25, 0], [rt, -rt * 1.25, 0]);
       } else {
         var Hc = clamp(num('h') || 2 * Dt, 0.6 * Dt, 2 * Dt);
         s = vertical(extrude(circle(rt, 40), Hc, 5, 4));
@@ -1939,30 +1974,33 @@ function buildJpegBlob(entries, when, modo){
           s.push([[-rt, Hc/2, 0], [rt, Hc/2, 0], true], [[0, Hc/2, -rt], [0, Hc/2, rt], true]);
         }
         var yb = -Hc / 2 - (kind === 'elip' ? Dt / 4 : 0) - Dt * 0.2;
-        d = {a:[-rt, yb, 0], b:[rt, yb, 0], label:lab('d')};
+        addDim('d', [-rt, yb, 0], [rt, yb, 0]);
+        addDim('h', [rt * 1.3, -Hc / 2, 0], [rt * 1.3, Hc / 2, 0]);
       }
     } else { // desenvolvimento linear
       var dev = num('dev') || 0.5, sq = dev / 4, Ll = clamp(num('l') || 8 * sq, 4 * sq, 8 * sq);
       var Q = [[sq/2,-sq/2],[sq/2,sq/2],[-sq/2,sq/2],[-sq/2,-sq/2]];
       s = extrude(Q, Ll, 6, 1);
-      d = lenDim(Ll, Q, lab('l'));
+      var ldl = lenDim(Ll, Q, ''), xl = Ll / 2 + sq * 0.8;
+      addDim('l', ldl.a, ldl.b);
+      addDim('dev', [xl, -sq / 2, -sq / 2 - sq * 0.6], [xl, sq / 2, -sq / 2 - sq * 0.6]);
     }
     var m = 0;
     s.forEach(function(g){ g[0].concat(g[1]).forEach(function(v){ m = Math.max(m, Math.abs(v)); }); });
-    if (d) [d.a, d.b].forEach(function(p){ p.forEach(function(v){ m = Math.max(m, Math.abs(v) * 0.9); }); });
+    ds.forEach(function(d){ [d.a, d.b].forEach(function(p){ p.forEach(function(v){ m = Math.max(m, Math.abs(v) * 0.9); }); }); });
     m = m || 1;
     var nz = function(p){ return p.map(function(v){ return v / m; }); };
     return {
       segs: s.map(function(g){ return [nz(g[0]), nz(g[1]), g[2]]; }),
-      dim: d ? {a:nz(d.a), b:nz(d.b), label:d.label} : null
+      dims: ds.map(function(d){ return {a:nz(d.a), b:nz(d.b), label:d.label}; })
     };
   }
 
   function build(){
     var u = unitLabel();
     var lab = function(id){ var el = document.getElementById('f-' + id); var v = el && String(el.value).trim(); return SYM[id] + ' = ' + (v ? v.replace('.', ',') + ' ' + u : '?'); };
-    var g0 = geom(current(), num, sel, lab);
-    segs = g0.segs; dim = g0.dim;
+    var g0 = geom(current(), num, sel, lab, function(id){ return !!document.getElementById('f-' + id); });
+    segs = g0.segs; dims = g0.dims;
 
     // leitura dos parâmetros digitados (— quando vazio)
     var parts = [];
@@ -1981,7 +2019,9 @@ function buildJpegBlob(entries, when, modo){
     var nm = function(id){ var x = v[id]; if (x == null) return null; var n = Number(String(x).trim().replace(',', '.')); return n > 0 ? n : null; };
     var sl = function(id, def){ return (v[id] != null && v[id] !== '') ? v[id] : def; };
     var lb = function(id){ var x = v[id] == null ? '' : String(v[id]).trim(); return SYM[id] + ' = ' + (x ? x.replace('.', ',') + ' ' + u : '?'); };
-    var g; try { g = geom(entry.typeKey, nm, sl, lb); } catch(err){ return null; }
+    var cfgF = {}; try { TYPES[entry.typeKey].fields.forEach(function(f){ cfgF[f.id] = f; }); } catch(err){}
+    var hasF = function(id){ var f = cfgF[id]; return !!f && f.kind === 'len' && (!f.show || f.show(v)) && nm(id) != null; };
+    var g; try { g = geom(entry.typeKey, nm, sl, lb, hasF); } catch(err){ return null; }
     var ya = yaw == null ? -0.6 : yaw, pi = pitch == null ? 0.42 : pitch;
     var cyw = Math.cos(ya), syw = Math.sin(ya), cp = Math.cos(pi), sp = Math.sin(pi);
     function pj(p){ var x1 = p[0] * cyw + p[2] * syw, z1 = -p[0] * syw + p[2] * cyw, y1 = p[1] * cp - z1 * sp, z2 = p[1] * sp + z1 * cp, f = 3.2 / (3.2 + z2); return [x1 * f, y1 * f, z2]; }
@@ -1992,7 +2032,7 @@ function buildJpegBlob(entries, when, modo){
       return [a[0], a[1], b[0], b[1], sg[2] ? 1 : 0, clamp(0.62 - (a[2] + b[2]) * 0.28, 0.14, 0.9)];
     });
     var dm = null;
-    if (g.dim){ var A = pj(g.dim.a), B = pj(g.dim.b); bb(A); bb(B); dm = {x1:A[0], y1:A[1], x2:B[0], y2:B[1], label:g.dim.label}; }
+    if (g.dims && g.dims.length){ var d0 = g.dims[0], A = pj(d0.a), B = pj(d0.b); bb(A); bb(B); dm = {x1:A[0], y1:A[1], x2:B[0], y2:B[1], label:d0.label}; }
     if (!lines.length) return null;
     return {lines:lines, dim:dm, minx:minx, maxx:maxx, miny:miny, maxy:maxy};
   };
@@ -2001,7 +2041,8 @@ function buildJpegBlob(entries, when, modo){
   function draw(){
     var W = cv.width, H = cv.height, dp = window.devicePixelRatio || 1;
     ctx.clearRect(0, 0, W, H);
-    var sc = Math.min(W, H) * 0.33, cx = W / 2, cy = H / 2 + H * 0.05;
+    var resv = dimsEl && dimsEl.offsetHeight ? (dimsEl.offsetHeight + 14) * dp : 0; // faixa inferior ocupada pelo texto das medidas
+    var sc = Math.min(W, H - resv) * 0.33, cx = W / 2, cy = (H - resv) / 2 + H * 0.05;
     var cyw = Math.cos(yaw), syw = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
     function proj(p){ var x1 = p[0] * cyw + p[2] * syw, z1 = -p[0] * syw + p[2] * cyw, y1 = p[1] * cp - z1 * sp, z2 = p[1] * sp + z1 * cp, f = 3.2 / (3.2 + z2);
       return [cx + x1 * sc * f, cy - y1 * sc * f, z2]; }
@@ -2011,17 +2052,24 @@ function buildJpegBlob(entries, when, modo){
       ctx.strokeStyle = g[2] ? 'rgba(255,155,62,' + clamp(dep + 0.15, 0.3, 1) + ')' : 'rgba(226,229,235,' + dep + ')';
       ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
     });
-    if (dim){ // cota
+    var labs = [];
+    ctx.font = '600 ' + Math.round(12 * dp) + 'px "Barlow Semi Condensed","Arial Narrow",sans-serif';
+    dims.forEach(function(dim){ // cotas
       var A = proj(dim.a), B = proj(dim.b), dx = B[0] - A[0], dy = B[1] - A[1], len = Math.hypot(dx, dy) || 1, nx = -dy / len * 6 * dp, ny = dx / len * 6 * dp;
       ctx.strokeStyle = 'rgba(255,155,62,.85)'; ctx.lineWidth = Math.max(1, dp);
       ctx.setLineDash([5 * dp, 4 * dp]); ctx.beginPath(); ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]); ctx.stroke(); ctx.setLineDash([]);
       [A, B].forEach(function(P){ ctx.beginPath(); ctx.moveTo(P[0] - nx, P[1] - ny); ctx.lineTo(P[0] + nx, P[1] + ny); ctx.stroke(); });
-      ctx.font = '600 ' + Math.round(13 * dp) + 'px "Barlow Semi Condensed","Arial Narrow",sans-serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      var mx = (A[0] + B[0]) / 2, my = (A[1] + B[1]) / 2 + 14 * dp, tw = ctx.measureText(dim.label).width + 12 * dp;
-      ctx.fillStyle = 'rgba(16,17,20,.9)'; ctx.fillRect(mx - tw / 2, my - 10 * dp, tw, 20 * dp);
-      ctx.fillStyle = '#ff9b3e'; ctx.fillText(dim.label, mx, my);
-    }
+      var tw = ctx.measureText(dim.label).width + 10 * dp, th = 18 * dp, vert = Math.abs(dx) < Math.abs(dy);
+      var mx = (A[0] + B[0]) / 2, my = (A[1] + B[1]) / 2;
+      var lx = vert ? mx + 8 * dp : mx - tw / 2, ly = vert ? my - th / 2 : my + 6 * dp;
+      labs.push({x: clamp(lx, 2 * dp, W - tw - 2 * dp), y: clamp(ly, 2 * dp, H - resv - th - 2 * dp), w: tw, h: th, t: dim.label});
+    });
+    window.nmPlaceLabels(labs, 2 * dp, H - resv - 2 * dp, 2 * dp);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    labs.forEach(function(l){
+      ctx.fillStyle = 'rgba(16,17,20,.9)'; ctx.fillRect(l.x, l.y, l.w, l.h);
+      ctx.fillStyle = '#ff9b3e'; ctx.fillText(l.t, l.x + l.w / 2, l.y + l.h / 2);
+    });
   }
   function loop(ts){
     if (dirty) build();
