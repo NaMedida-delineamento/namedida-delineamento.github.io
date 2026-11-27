@@ -795,6 +795,8 @@ function paintVolume(area, dftUm, svPct, perdaPct){
 
 /*EXPORT-START*/
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const ASSINATURA = 'Feito com NaMedida'; // vai em todas as exportações (texto, Excel, PDF, JPEG)
+const ASSINATURA_TXT = '────────────────\n📐 ' + ASSINATURA;
 
 /* ----- Texto (para copiar / mensageiros / e-mail / .txt) ----- */
 const fmtN = (x, max) => x.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: max == null ? 3 : max});
@@ -818,7 +820,7 @@ function buildText(entries, when){
   const p = n => String(n).padStart(2, '0');
   const stamp = p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
   const head = 'DELINEAMENTO — Área de superfície ' + (modoTexto === 'jateada' ? 'Jateada' : 'Pintada') + '\n' + stamp;
-  if (entries.length === 1) return head + '\n\n' + entryBlock(entries[0], 0);
+  if (entries.length === 1) return head + '\n\n' + entryBlock(entries[0], 0) + '\n\n' + ASSINATURA_TXT;
   const body = entries.map((e, i) => entryBlock(e, i + 1)).join('\n\n');
   const total = entries.reduce((s, e) => s + e.area, 0);
   const comTinta = entries.filter(e => e.litros != null);
@@ -827,7 +829,7 @@ function buildText(entries, when){
     foot += '\nTinta total (com perdas): ' + fmtN(comTinta.reduce((s, e) => s + e.litros, 0)) + ' L'
          + (comTinta.length < entries.length ? ' (somente itens com consumo informado)' : '');
   }
-  return head + '\n\n' + body + '\n\n' + foot;
+  return head + '\n\n' + body + '\n\n' + foot + '\n\n' + ASSINATURA_TXT;
 }
 
 /* ----- XLSX (gerador mínimo: ZIP sem compressão + XML) ----- */
@@ -910,30 +912,38 @@ function xlsxSheetXml(entries){
   rows.push('<row r="' + tr + '">' + sc('A' + tr, 'TOTAL', 3) +
     '<c r="H' + tr + '" s="5"><f>SUM(H2:H' + last + ')</f><v>' + r6(sumArea) + '</v></c>' +
     (anyL ? '<c r="I' + tr + '" s="5"><f>SUM(I2:I' + last + ')</f><v>' + r6(sumL) + '</v></c>' : '') + '</row>');
+  const ar = tr + 2;
+  rows.push('<row r="' + ar + '" ht="24" customHeight="1">' + sc('A' + ar, ASSINATURA, 6) +
+    ['B','C','D','E','F','G','H','I'].map(cl => '<c r="' + cl + ar + '" s="6"/>').join('') + '</row>');
   const widths = [17, 24, 30, 24, 46, 7, 18, 16, 20];
   const cols = widths.map((w, i) => '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + w + '" customWidth="1"/>').join('');
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
     '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
-    '<dimension ref="A1:I' + tr + '"/>' +
+    '<dimension ref="A1:I' + (tr + 2) + '"/>' +
     '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' +
-    '<sheetFormatPr defaultRowHeight="15"/><cols>' + cols + '</cols><sheetData>' + rows.join('') + '</sheetData></worksheet>';
+    '<sheetFormatPr defaultRowHeight="15"/><cols>' + cols + '</cols><sheetData>' + rows.join('') + '</sheetData>' +
+    '<mergeCells count="1"><mergeCell ref="A' + (tr + 2) + ':I' + (tr + 2) + '"/></mergeCells></worksheet>';
 }
 
 const XLSX_STYLES = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
   '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
   '<numFmts count="2"><numFmt numFmtId="164" formatCode="0.000"/><numFmt numFmtId="165" formatCode="dd/mm/yyyy hh:mm"/></numFmts>' +
-  '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>' +
-  '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>' +
-  '<fill><patternFill patternType="solid"><fgColor rgb="FFD9EAF0"/><bgColor indexed="64"/></patternFill></fill></fills>' +
-  '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+  '<fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font>' +
+  '<font><b/><sz val="12"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts>' +
+  '<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>' +
+  '<fill><patternFill patternType="solid"><fgColor rgb="FFD9EAF0"/><bgColor indexed="64"/></patternFill></fill>' +
+  '<fill><patternFill patternType="solid"><fgColor rgb="FF333333"/><bgColor indexed="64"/></patternFill></fill></fills>' +
+  '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>' +
+  '<border><left/><right/><top/><bottom style="thick"><color rgb="FFF07A12"/></bottom><diagonal/></border></borders>' +
   '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-  '<cellXfs count="6">' +
+  '<cellXfs count="7">' +
   '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
   '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +
   '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
   '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
   '<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
   '<xf numFmtId="164" fontId="1" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/>' +
+  '<xf numFmtId="0" fontId="2" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
   '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
 
 function buildXlsxBytes(entries){
@@ -1179,9 +1189,13 @@ function buildPdfBytes(entries, when, modo){
   // rodapé com paginação
   pages.forEach((po, idx) => {
     ops = po;
-    hline(M, M + CW, H - 40, LINE, 0.5);
-    text('NaMedida — Delineamento', M, H - 26, 8, false, MUT);
-    text('Página ' + (idx + 1) + ' de ' + pages.length, W - M, H - 26, 8, false, MUT, 'r');
+    rect(0, H - 34, W, 34, ACC);
+    rect(0, H - 34, W, 2.5, OR);
+    rect(M, H - 22, 9, 9, OR);
+    text('Feito com ', M + 16, H - 14, 10, false, WHITE);
+    text('NaMedida', M + 16 + pdfTextW('Feito com ', false, 10), H - 14, 10, true, OR);
+    text(stamp, W / 2 - pdfTextW(stamp, false, 8) / 2, H - 14, 8, false, [0.75,0.75,0.75]);
+    text('Página ' + (idx + 1) + ' de ' + pages.length, W - M, H - 14, 8.5, false, WHITE, 'r');
   });
 
   // montagem do arquivo
@@ -1199,7 +1213,7 @@ function buildPdfBytes(entries, when, modo){
     add(6 + 2 * i, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + W + ' ' + H + '] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ' + (5 + 2 * i) + ' 0 R >>');
   });
   const infoId = 5 + 2 * P, count = infoId + 1;
-  add(infoId, '<< /Title (Delineamento) /Producer (NaMedida) >>');
+  add(infoId, '<< /Title (Delineamento) /Producer (NaMedida) /Creator (' + ASSINATURA + ') >>');
   const xref = out.length;
   out += 'xref\n0 ' + count + '\n0000000000 65535 f \n';
   for (let id = 1; id < count; id++) out += String(off[id]).padStart(10, '0') + ' 00000 n \n';
@@ -1290,7 +1304,7 @@ function buildJpegBlob(entries, when, modo){
     if (w2) h = Math.max(h, 270);
     return {e, tl, dl, h, w2};
   });
-  const HEAD = 130, FOOT = 120;
+  const HEAD = 130, FOOT = 180, BAND = 78;
   const H = HEAD + 24 + items.reduce((s, it) => s + it.h + 16, 0) + FOOT;
   c.width = W; c.height = H;
 
@@ -1336,8 +1350,15 @@ function buildJpegBlob(entries, when, modo){
   ctx.fillStyle = '#000000'; ctx.textAlign = 'left'; setF(30, true); ctx.fillText('ÁREA TOTAL', M + 20, y + 52);
   ctx.textAlign = 'right'; ctx.fillStyle = ORANGE;
   ctx.fillText(fmtN(total) + ' m²' + (comTinta.length ? '   ·   Tinta ≈ ' + fmtN(comTinta.reduce((s, e) => s + e.litros, 0)) + ' L' : ''), M + CW - 20, y + 52);
-  ctx.fillStyle = '#777777'; ctx.textAlign = 'left'; setF(20, false);
-  ctx.fillText('NaMedida — Delineamento', M, H - 28);
+  ctx.fillStyle = '#333333'; ctx.fillRect(0, H - BAND, W, BAND);
+  ctx.fillStyle = ORANGE; ctx.fillRect(0, H - BAND, W, 6);
+  const by = H - BAND / 2 + 13;
+  setF(30, false); const w1 = ctx.measureText('Feito com ').width;
+  setF(30, true); const w2 = ctx.measureText('NaMedida').width;
+  const sq = 22, gap = 14, bx0 = W / 2 - (sq + gap + w1 + w2) / 2;
+  ctx.fillStyle = ORANGE; ctx.fillRect(bx0, by - sq + 2, sq, sq);
+  ctx.textAlign = 'left'; ctx.fillStyle = '#ffffff'; setF(30, false); ctx.fillText('Feito com ', bx0 + sq + gap, by);
+  ctx.fillStyle = ORANGE; setF(30, true); ctx.fillText('NaMedida', bx0 + sq + gap + w1, by);
   return new Promise(res => c.toBlob(res, 'image/jpeg', 0.92));
 }
 /*EXPORT-END*/
